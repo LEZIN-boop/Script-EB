@@ -1,909 +1,340 @@
--- ============================================
--- CONFIGURAÇÕES INICIAIS
--- ============================================
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local StarterGui = game:GetService("StarterGui")
+--[[ JECK DE CALCINHA SCRIPTS - JJ's AUTO (POLICHINELOS) ]]
 
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 
--- ============================================
--- SISTEMA DE SEGURANÇA BÁSICO
--- ============================================
-local function safeCall(func, ...)
-    local success, result = pcall(func, ...)
-    if not success then
-        warn("[EB] Erro: " .. tostring(result))
-    end
-    return success, result
-end
+-- Variáveis
+local running = false
+local paused = false
+local target = 10
+local delayTime = 0.3
+local doneCount = 0
+local jjThread = nil
 
--- ============================================
--- VERIFICAÇÃO DE EXECUTOR
--- ============================================
-local ExecutorFeatures = {
-    HasFileSystem = pcall(function() return isfile end),
-    HasWriteFile = pcall(function() return writefile end),
-    HasReadFile = pcall(function() return readfile end),
-    HasSetClipboard = pcall(function() return setclipboard end),
-    HasSynRequest = pcall(function() return syn and syn.request end),
-    HasHttpRequest = pcall(function() return request or http_request end)
-}
-
--- ============================================
--- SISTEMA DE SAVE ADAPTATIVO
--- ============================================
-local SaveSystem = {
-    Data = {},
-    CanSave = ExecutorFeatures.HasWriteFile and ExecutorFeatures.HasReadFile
-}
-
-function SaveSystem:Load()
-    if not self.CanSave then
-        self.Data = {
-            JJ = {final = 10, suffix = "!", interval = 1.5},
-            Routes = {},
-            Settings = {}
-        }
-        return
-    end
+-- Função para detectar qual tecla está sendo pedida
+local function detectKey()
+    local gui = LocalPlayer.PlayerGui
+    if not gui then return nil end
     
-    local success, content = pcall(function()
-        return readfile("EB_Data.json")
-    end)
-    
-    if success and content then
-        local success2, data = pcall(function()
-            return game:GetService("HttpService"):JSONDecode(content)
-        end)
-        if success2 then
-            self.Data = data
-        end
-    end
-end
-
-function SaveSystem:Save()
-    if not self.CanSave then return end
-    
-    pcall(function()
-        local json = game:GetService("HttpService"):JSONEncode(self.Data)
-        writefile("EB_Data.json", json)
-    end)
-end
-
--- ============================================
--- DETECTOR DE SISTEMA DE CHAT REAL
--- ============================================
-local ChatSystem = {
-    Method = nil -- "legacy", "textchat", "remote"
-}
-
-function ChatSystem:Detect()
-    -- Método 1: Procurar por remotes de chat comuns
-    local chatRemotes = {
-        "SayMessageRequest",
-        "ChatRequest",
-        "MessageRequest",
-        "SendMessage"
-    }
-    
-    for _, remoteName in ipairs(chatRemotes) do
-        local remote = ReplicatedStorage:FindFirstChild(remoteName, true)
-        if remote and remote:IsA("RemoteEvent") then
-            self.Method = "remote"
-            self.Remote = remote
-            return true
-        end
-    end
-    
-    -- Método 2: TextChatService (Roblox moderno)
-    local textChatService = game:GetService("TextChatService")
-    if textChatService then
-        local textChannels = textChatService:FindFirstChild("TextChannels")
-        if textChannels then
-            for _, channel in ipairs(textChannels:GetChildren()) do
-                if channel:IsA("TextChannel") then
-                    self.Method = "textchannel"
-                    self.Channel = channel
-                    return true
+    -- Procura o template de input
+    local polichinelos = gui:FindFirstChild("Polichinelos")
+    if polichinelos then
+        local screen = polichinelos:FindFirstChild("Screen")
+        if screen then
+            local template = screen:FindFirstChild("InputTemplate")
+            if template then
+                -- Procura por texto "Q" ou "E" dentro do template
+                for _, child in ipairs(template:GetDescendants()) do
+                    if child:IsA("TextLabel") or child:IsA("TextButton") then
+                        local text = child.Text:upper():gsub("%s", "")
+                        if text == "Q" then
+                            return Enum.KeyCode.Q
+                        elseif text == "E" then
+                            return Enum.KeyCode.E
+                        end
+                    end
                 end
             end
         end
     end
-    
-    -- Método 3: Chat legado
-    local chatService = game:GetService("Chat")
-    if chatService and chatService.Chat then
-        self.Method = "legacy"
-        return true
-    end
-    
-    return false
+    return nil
 end
 
-function ChatSystem:SendMessage(message)
-    local character = LocalPlayer.Character
-    if not character then return false end
-    
-    if self.Method == "remote" and self.Remote then
-        self.Remote:FireServer(message, "All")
-        return true
-    elseif self.Method == "textchannel" and self.Channel then
-        pcall(function()
-            self.Channel:SendAsync(message)
-        end)
-        return true
-    elseif self.Method == "legacy" then
-        local head = character:FindFirstChild("Head")
-        if head then
-            game:GetService("Chat"):Chat(head, message, Enum.ChatColor.White)
-            return true
-        end
-    end
-    
-    return false
-end
-
--- ============================================
--- CONVERSOR DE NÚMEROS (REAL E TESTADO)
--- ============================================
-local NumberToWords = {}
-
-function NumberToWords.Convert(num)
-    local unidades = {
-        "UM", "DOIS", "TRÊS", "QUATRO", "CINCO",
-        "SEIS", "SETE", "OITO", "NOVE", "DEZ",
-        "ONZE", "DOZE", "TREZE", "QUATORZE", "QUINZE",
-        "DEZESSEIS", "DEZESSETE", "DEZOITO", "DEZENOVE"
-    }
-    
-    local dezenas = {
-        [2] = "VINTE", [3] = "TRINTA", [4] = "QUARENTA", [5] = "CINQUENTA",
-        [6] = "SESSENTA", [7] = "SETENTA", [8] = "OITENTA", [9] = "NOVENTA"
-    }
-    
-    local centenas = {
-        [1] = "CENTO", [2] = "DUZENTOS", [3] = "TREZENTOS", [4] = "QUATROCENTOS",
-        [5] = "QUINHENTOS", [6] = "SEISCENTOS", [7] = "SETECENTOS", [8] = "OITOCENTOS",
-        [9] = "NOVECENTOS"
-    }
-    
-    if type(num) ~= "number" or num < 1 or num > 999 then
-        return "NÚMERO INVÁLIDO"
-    end
-    
-    if num == 100 then return "CEM" end
-    
-    if num <= 19 then
-        return unidades[num]
-    elseif num <= 99 then
-        local dezena = math.floor(num / 10)
-        local unidade = num % 10
-        if unidade == 0 then
-            return dezenas[dezena]
-        else
-            return dezenas[dezena] .. " E " .. unidades[unidade]
-        end
-    else
-        local centena = math.floor(num / 100)
-        local resto = num % 100
-        
-        local prefixo
-        if centena == 1 then
-            prefixo = "CENTO"
-        else
-            prefixo = centenas[centena]
-        end
-        
-        if resto == 0 then
-            if centena == 1 then return "CEM"
-            else return centenas[centena] end
-        elseif resto <= 19 then
-            return prefixo .. " E " .. unidades[resto]
-        else
-            local dezena = math.floor(resto / 10)
-            local unidade = resto % 10
-            if unidade == 0 then
-                return prefixo .. " E " .. dezenas[dezena]
-            else
-                return prefixo .. " E " .. dezenas[dezena] .. " E " .. unidades[unidade]
-            end
-        end
-    end
-end
-
--- ============================================
--- SISTEMA DE JJ'S (FUNCIONAL REAL)
--- ============================================
-local JJSystem = {
-    Running = false,
-    Paused = false,
-    CurrentNumber = 1,
-    Config = {
-        FinalNumber = 10,
-        Suffix = "!",
-        Interval = 1.5
-    },
-    Thread = nil
-}
-
-function JJSystem:Start()
-    if self.Running then return end
-    
-    self.Running = true
-    self.Paused = false
-    self.CurrentNumber = 1
-    
-    self.Thread = task.spawn(function()
-        while self.Running and self.CurrentNumber <= self.Config.FinalNumber do
-            if not self.Paused then
-                local text = NumberToWords.Convert(self.CurrentNumber) .. " " .. self.Config.Suffix
-                ChatSystem:SendMessage(text)
-                self.CurrentNumber = self.CurrentNumber + 1
-            end
-            task.wait(self.Config.Interval)
-        end
-        self:Stop()
-    end)
-end
-
-function JJSystem:Pause()
-    self.Paused = true
-end
-
-function JJSystem:Resume()
-    self.Paused = false
-end
-
-function JJSystem:Stop()
-    self.Running = false
-    self.Paused = false
-    self.CurrentNumber = 1
-end
-
--- ============================================
--- SISTEMA DE PARKOUR (SEM BUGS FÍSICOS)
--- ============================================
-local ParkourSystem = {
-    Recording = false,
-    Playing = false,
-    RecordedFrames = {},
-    Routes = {},
-    CurrentRoute = nil
-}
-
-function ParkourSystem:StartRecording()
-    if self.Recording then return end
-    
+-- Função para contar quantos já foram feitos
+local function getProgress()
     local char = LocalPlayer.Character
-    if not char then return end
+    if not char then return 0 end
     
-    local root = char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
+    local head = char:FindFirstChild("Head")
+    if not head then return 0 end
     
-    self.Recording = true
-    self.RecordedFrames = {}
-    
-    task.spawn(function()
-        local lastPos = root.Position
-        local startTime = tick()
-        
-        while self.Recording do
-            local currentChar = LocalPlayer.Character
-            if not currentChar then break end
-            
-            local currentRoot = currentChar:FindFirstChild("HumanoidRootPart")
-            if not currentRoot then break end
-            
-            local humanoid = currentChar:FindFirstChild("Humanoid")
-            
-            -- Só gravar se houve movimento significativo
-            if (currentRoot.Position - lastPos).Magnitude > 0.1 then
-                table.insert(self.RecordedFrames, {
-                    Position = currentRoot.Position,
-                    Velocity = currentRoot.Velocity,
-                    Jump = humanoid and humanoid.Jump or false,
-                    Time = tick() - startTime
-                })
-                lastPos = currentRoot.Position
+    -- Procura BillboardGui ou similar acima da cabeça
+    for _, child in ipairs(head:GetChildren()) do
+        if child:IsA("BillboardGui") then
+            for _, label in ipairs(child:GetDescendants()) do
+                if label:IsA("TextLabel") then
+                    -- Tenta extrair número do texto (ex: "5/10")
+                    local num = label.Text:match("(%d+)/%d+")
+                    if num then
+                        return tonumber(num) or 0
+                    end
+                    -- Ou número puro
+                    local pure = label.Text:match("(%d+)")
+                    if pure then
+                        return tonumber(pure) or 0
+                    end
+                end
             end
-            
-            task.wait(0.05) -- 20 FPS para economizar memória
         end
+    end
+    return doneCount
+end
+
+-- Função para pressionar tecla
+local function pressKey(key)
+    pcall(function()
+        VirtualInputManager:SendKeyEvent(true, key, false, nil)
+        task.wait(0.05)
+        VirtualInputManager:SendKeyEvent(false, key, false, nil)
     end)
 end
 
-function ParkourSystem:StopRecording()
-    self.Recording = false
+-- Loop principal
+local function startJJ()
+    if running then return end
+    running = true
+    paused = false
     
-    if #self.RecordedFrames == 0 then return end
-    
-    local routeName = "Rota " .. (#self.Routes + 1)
-    self.Routes[routeName] = {
-        Frames = self.RecordedFrames,
-        Date = os.date("%H:%M:%S"),
-        Duration = self.RecordedFrames[#self.RecordedFrames].Time
-    }
-    
-    -- Salvar
-    SaveSystem.Data.Routes = {}
-    for name, route in pairs(self.Routes) do
-        SaveSystem.Data.Routes[name] = {
-            frames = #route.Frames,
-            duration = route.Duration
-        }
-    end
-    SaveSystem:Save()
-    
-    return routeName
-end
-
-function ParkourSystem:PlayRoute(routeName)
-    if self.Playing then return end
-    
-    local route = self.Routes[routeName]
-    if not route then return end
-    
-    self.Playing = true
-    
-    task.spawn(function()
-        local char = LocalPlayer.Character
-        if not char then 
-            self.Playing = false
-            return 
-        end
+    jjThread = task.spawn(function()
+        local lastCount = 0
+        local noProgressCount = 0
         
-        local root = char:FindFirstChild("HumanoidRootPart")
-        local humanoid = char:FindFirstChild("Humanoid")
-        
-        if not root or not humanoid then
-            self.Playing = false
-            return
-        end
-        
-        -- Usar movimentação natural, não teleporte
-        for i, frame in ipairs(route.Frames) do
-            if not self.Playing then break end
-            
-            -- Verificar se personagem ainda existe
-            if not LocalPlayer.Character or LocalPlayer.Character ~= char then
-                break
-            end
-            
-            -- Movimento usando Humanoid:MoveTo (mais natural)
-            humanoid:MoveTo(frame.Position)
-            
-            -- Pulo no momento certo
-            if frame.Jump then
-                humanoid.Jump = true
-            end
-            
-            -- Aguardar o tempo correto
-            local waitTime = i < #route.Frames and 
-                           (route.Frames[i+1].Time - frame.Time) or 0.1
-            task.wait(math.max(0.05, waitTime))
-        end
-        
-        self.Playing = false
-    end)
-end
-
-function ParkourSystem:StopPlayback()
-    self.Playing = false
-end
-
--- ============================================
--- SISTEMA DE IA (SEM EXPOR API KEY)
--- ============================================
-local IASystem = {
-    Enabled = false,
-    ProxyURL = nil -- Opcional: URL de proxy seguro
-}
-
-function IASystem:GenerateText(theme, type, formality)
-    -- Método seguro: usar proxy ou avisar que precisa de configuração
-    if not self.ProxyURL then
-        return [[
-⚠️ SISTEMA DE IA NÃO CONFIGURADO
-
-Para usar o gerador de textos:
-1. Configure um proxy seguro
-2. Ou use a API diretamente (não recomendado)
-
-Tema solicitado: ]] .. theme .. [[
-Tipo: ]] .. type .. [[
-Formalidade: ]] .. formality .. [[
-
-Este é um texto de exemplo que seria gerado.
-Configure a API para obter textos reais.
-        ]]
-    end
-    
-    -- Se tiver proxy configurado
-    if ExecutorFeatures.HasSynRequest or ExecutorFeatures.HasHttpRequest then
-        local requestFunc = syn and syn.request or request
-        
-        local body = game:GetService("HttpService"):JSONEncode({
-            theme = theme,
-            type = type,
-            formality = formality
-        })
-        
-        local response = requestFunc({
-            Url = self.ProxyURL,
-            Method = "POST",
-            Headers = {["Content-Type"] = "application/json"},
-            Body = body
-        })
-        
-        if response.StatusCode == 200 then
-            local data = game:GetService("HttpService"):JSONDecode(response.Body)
-            return data.text or "Erro ao gerar texto"
-        end
-    end
-    
-    return "Falha na comunicação com o servidor de IA"
-end
-
--- ============================================
--- INTERFACE GRÁFICA (COMPLETA E FUNCIONAL)
--- ============================================
-local GUI = {
-    ScreenGui = nil,
-    MainFrame = nil,
-    Visible = true
-}
-
-function GUI:Create()
-    -- Destruir anterior
-    if self.ScreenGui then
-        self.ScreenGui:Destroy()
-    end
-    
-    -- Criar nova
-    self.ScreenGui = Instance.new("ScreenGui")
-    self.ScreenGui.Name = "EB_System"
-    self.ScreenGui.Parent = game:GetService("CoreGui") -- Mais seguro
-    
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 550, 0, 450)
-    frame.Position = UDim2.new(0.5, -275, 0.5, -225)
-    frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-    frame.BorderSizePixel = 0
-    frame.Parent = self.ScreenGui
-    
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 10)
-    corner.Parent = frame
-    
-    -- Título
-    local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, 0, 0, 35)
-    title.BackgroundColor3 = Color3.fromRGB(45, 35, 25)
-    title.Text = "EB TRAINING SYSTEM v4.0"
-    title.TextColor3 = Color3.fromRGB(220, 220, 220)
-    title.Font = Enum.Font.GothamBold
-    title.TextSize = 16
-    title.Parent = frame
-    
-    local titleCorner = Instance.new("UICorner")
-    titleCorner.CornerRadius = UDim.new(0, 10)
-    titleCorner.Parent = title
-    
-    -- Botão fechar
-    local close = Instance.new("TextButton")
-    close.Size = UDim2.new(0, 30, 0, 25)
-    close.Position = UDim2.new(1, -35, 0, 5)
-    close.BackgroundColor3 = Color3.fromRGB(244, 67, 54)
-    close.Text = "X"
-    close.TextColor3 = Color3.fromRGB(255, 255, 255)
-    close.Font = Enum.Font.GothamBold
-    close.BorderSizePixel = 0
-    close.Parent = title
-    
-    local closeCorner = Instance.new("UICorner")
-    closeCorner.CornerRadius = UDim.new(0, 5)
-    closeCorner.Parent = close
-    
-    close.MouseButton1Click:Connect(function()
-        self.ScreenGui.Enabled = not self.ScreenGui.Enabled
-    end)
-    
-    -- Sistema de abas simples
-    local tabFrame = Instance.new("Frame")
-    tabFrame.Size = UDim2.new(1, 0, 0, 35)
-    tabFrame.Position = UDim2.new(0, 0, 0, 35)
-    tabFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-    tabFrame.Parent = frame
-    
-    local content = Instance.new("ScrollingFrame")
-    content.Size = UDim2.new(1, -20, 1, -85)
-    content.Position = UDim2.new(0, 10, 0, 75)
-    content.BackgroundTransparency = 1
-    content.ScrollBarThickness = 4
-    content.CanvasSize = UDim2.new(0, 0, 0, 500)
-    content.Parent = frame
-    
-    -- Criar abas
-    local tabs = {
-        {Name = "JJ's", Content = self:CreateJJContent(content)},
-        {Name = "Parkour", Content = self:CreateParkourContent(content)},
-        {Name = "IA", Content = self:CreateIAContent(content)}
-    }
-    
-    local tabButtons = {}
-    local tabContents = {}
-    
-    for i, tab in ipairs(tabs) do
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(0, 100, 1, -5)
-        btn.Position = UDim2.new(0, (i-1)*105 + 10, 0, 3)
-        btn.BackgroundColor3 = i == 1 and Color3.fromRGB(60, 50, 40) or Color3.fromRGB(40, 40, 40)
-        btn.Text = tab.Name
-        btn.TextColor3 = Color3.fromRGB(220, 220, 220)
-        btn.Font = Enum.Font.Gotham
-        btn.TextSize = 13
-        btn.BorderSizePixel = 0
-        btn.Parent = tabFrame
-        
-        local btnCorner = Instance.new("UICorner")
-        btnCorner.CornerRadius = UDim.new(0, 5)
-        btnCorner.Parent = btn
-        
-        table.insert(tabButtons, btn)
-        table.insert(tabContents, tab.Content)
-        
-        btn.MouseButton1Click:Connect(function()
-            for _, b in ipairs(tabButtons) do
-                b.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-            end
-            btn.BackgroundColor3 = Color3.fromRGB(60, 50, 40)
-            
-            for _, c in ipairs(tabContents) do
-                c.Visible = false
-            end
-            tab.Content.Visible = true
-        end)
-    end
-    
-    -- Mostrar primeira aba
-    if tabContents[1] then
-        tabContents[1].Visible = true
-    end
-    
-    -- Tornar arrastável
-    self:MakeDraggable(frame, title)
-    
-    self.MainFrame = frame
-    return self.ScreenGui
-end
-
-function GUI:CreateJJContent(parent)
-    local container = Instance.new("Frame")
-    container.Size = UDim2.new(1, 0, 1, 0)
-    container.BackgroundTransparency = 1
-    container.Visible = false
-    container.Parent = parent
-    
-    -- Configurações
-    local configLabel = Instance.new("TextLabel")
-    configLabel.Size = UDim2.new(1, 0, 0, 25)
-    configLabel.BackgroundTransparency = 1
-    configLabel.Text = "CONFIGURAÇÕES"
-    configLabel.TextColor3 = Color3.fromRGB(180, 150, 100)
-    configLabel.Font = Enum.Font.GothamBold
-    configLabel.TextSize = 14
-    configLabel.Parent = container
-    
-    -- Inputs
-    local inputs = {
-        {Label = "Número Final", Default = "10", Y = 30},
-        {Label = "Sufixo", Default = "!", Y = 60},
-        {Label = "Intervalo (s)", Default = "1.5", Y = 90}
-    }
-    
-    local inputBoxes = {}
-    for _, input in ipairs(inputs) do
-        local label = Instance.new("TextLabel")
-        label.Size = UDim2.new(0, 90, 0, 25)
-        label.Position = UDim2.new(0, 5, 0, input.Y)
-        label.BackgroundTransparency = 1
-        label.Text = input.Label .. ":"
-        label.TextColor3 = Color3.fromRGB(200, 200, 200)
-        label.Font = Enum.Font.Gotham
-        label.TextSize = 12
-        label.TextXAlignment = Enum.TextXAlignment.Left
-        label.Parent = container
-        
-        local box = Instance.new("TextBox")
-        box.Size = UDim2.new(0, 150, 0, 25)
-        box.Position = UDim2.new(0, 100, 0, input.Y)
-        box.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-        box.Text = input.Default
-        box.TextColor3 = Color3.fromRGB(220, 220, 220)
-        box.Font = Enum.Font.Gotham
-        box.TextSize = 12
-        box.BorderSizePixel = 0
-        box.Parent = container
-        
-        local boxCorner = Instance.new("UICorner")
-        boxCorner.CornerRadius = UDim.new(0, 4)
-        boxCorner.Parent = box
-        
-        table.insert(inputBoxes, box)
-    end
-    
-    -- Botões
-    local buttons = {
-        {Text = "▶ INICIAR", Color = Color3.fromRGB(76, 175, 80), Y = 130, Callback = function()
-            JJSystem.Config.FinalNumber = tonumber(inputBoxes[1].Text) or 10
-            JJSystem.Config.Suffix = inputBoxes[2].Text or "!"
-            JJSystem.Config.Interval = tonumber(inputBoxes[3].Text) or 1.5
-            JJSystem:Start()
-        end},
-        {Text = "⏸ PAUSAR", Color = Color3.fromRGB(255, 152, 0), Y = 170, Callback = function()
-            JJSystem:Pause()
-        end},
-        {Text = "▶ CONTINUAR", Color = Color3.fromRGB(76, 175, 80), Y = 210, Callback = function()
-            JJSystem:Resume()
-        end},
-        {Text = "⏹ PARAR", Color = Color3.fromRGB(244, 67, 54), Y = 250, Callback = function()
-            JJSystem:Stop()
-        end}
-    }
-    
-    for _, btn in ipairs(buttons) do
-        local button = Instance.new("TextButton")
-        button.Size = UDim2.new(1, -10, 0, 30)
-        button.Position = UDim2.new(0, 5, 0, btn.Y)
-        button.BackgroundColor3 = btn.Color
-        button.Text = btn.Text
-        button.TextColor3 = Color3.fromRGB(255, 255, 255)
-        button.Font = Enum.Font.GothamBold
-        button.TextSize = 12
-        button.BorderSizePixel = 0
-        button.Parent = container
-        
-        local btnCorner = Instance.new("UICorner")
-        btnCorner.CornerRadius = UDim.new(0, 5)
-        btnCorner.Parent = button
-        
-        button.MouseButton1Click:Connect(btn.Callback)
-    end
-    
-    -- Status
-    local status = Instance.new("TextLabel")
-    status.Size = UDim2.new(1, -10, 0, 25)
-    status.Position = UDim2.new(0, 5, 0, 300)
-    status.BackgroundTransparency = 1
-    status.Text = "Pronto"
-    status.TextColor3 = Color3.fromRGB(150, 150, 150)
-    status.Font = Enum.Font.Gotham
-    status.TextSize = 11
-    status.Parent = container
-    
-    -- Atualizar status
-    task.spawn(function()
-        while container.Parent do
-            if JJSystem.Running then
-                status.Text = string.format("Enviando: %d/%d", JJSystem.CurrentNumber - 1, JJSystem.Config.FinalNumber)
+        while running do
+            if not paused then
+                -- Detecta qual tecla o jogo está pedindo
+                local key = detectKey()
+                
+                if key then
+                    pressKey(key)
+                    task.wait(delayTime)
+                    noProgressCount = 0
+                else
+                    -- Se não encontrou o template, espera um pouco
+                    task.wait(0.5)
+                    noProgressCount = noProgressCount + 1
+                end
+                
+                -- Verifica progresso
+                local current = getProgress()
+                if current > lastCount then
+                    doneCount = current
+                    lastCount = current
+                end
+                
+                -- Se atingiu a meta, para
+                if doneCount >= target then
+                    running = false
+                    break
+                end
+                
+                -- Se ficou muito tempo sem progresso, alerta
+                if noProgressCount > 10 then
+                    warn("[JJ's] Template não encontrado. O jogo está aberto?")
+                    noProgressCount = 0
+                end
             else
-                status.Text = "Pronto"
+                task.wait(0.1)
             end
-            task.wait(0.5)
         end
+        running = false
     end)
-    
-    return container
 end
 
-function GUI:CreateParkourContent(parent)
-    local container = Instance.new("Frame")
-    container.Size = UDim2.new(1, 0, 1, 0)
-    container.BackgroundTransparency = 1
-    container.Visible = false
-    container.Parent = parent
-    
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, 0, 0, 25)
-    label.BackgroundTransparency = 1
-    label.Text = "PARKOUR RECORDER"
-    label.TextColor3 = Color3.fromRGB(180, 150, 100)
-    label.Font = Enum.Font.GothamBold
-    label.TextSize = 14
-    label.Parent = container
-    
-    local buttons = {
-        {Text = "⏺ GRAVAR", Color = Color3.fromRGB(244, 67, 54), Y = 35, Callback = function()
-            ParkourSystem:StartRecording()
-        end},
-        {Text = "⏹ PARAR GRAVAÇÃO", Color = Color3.fromRGB(255, 152, 0), Y = 75, Callback = function()
-            ParkourSystem:StopRecording()
-        end},
-        {Text = "▶ REPRODUZIR ÚLTIMA", Color = Color3.fromRGB(76, 175, 80), Y = 115, Callback = function()
-            local lastRoute = nil
-            for name, _ in pairs(ParkourSystem.Routes) do
-                lastRoute = name
-            end
-            if lastRoute then
-                ParkourSystem:PlayRoute(lastRoute)
-            end
-        end},
-        {Text = "⏹ PARAR", Color = Color3.fromRGB(244, 67, 54), Y = 155, Callback = function()
-            ParkourSystem:StopPlayback()
-        end}
-    }
-    
-    for _, btn in ipairs(buttons) do
-        local button = Instance.new("TextButton")
-        button.Size = UDim2.new(1, -10, 0, 30)
-        button.Position = UDim2.new(0, 5, 0, btn.Y)
-        button.BackgroundColor3 = btn.Color
-        button.Text = btn.Text
-        button.TextColor3 = Color3.fromRGB(255, 255, 255)
-        button.Font = Enum.Font.GothamBold
-        button.TextSize = 12
-        button.BorderSizePixel = 0
-        button.Parent = container
-        
-        local btnCorner = Instance.new("UICorner")
-        btnCorner.CornerRadius = UDim.new(0, 5)
-        btnCorner.Parent = button
-        
-        button.MouseButton1Click:Connect(btn.Callback)
+local function stopJJ()
+    running = false
+    paused = false
+    if jjThread then
+        task.cancel(jjThread)
+        jjThread = nil
     end
-    
-    -- Lista de rotas
-    local routesLabel = Instance.new("TextLabel")
-    routesLabel.Size = UDim2.new(1, 0, 0, 20)
-    routesLabel.Position = UDim2.new(0, 5, 0, 200)
-    routesLabel.BackgroundTransparency = 1
-    routesLabel.Text = "ROTAS SALVAS:"
-    routesLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
-    routesLabel.Font = Enum.Font.Gotham
-    routesLabel.TextSize = 11
-    routesLabel.TextXAlignment = Enum.TextXAlignment.Left
-    routesLabel.Parent = container
-    
-    local routesList = Instance.new("ScrollingFrame")
-    routesList.Size = UDim2.new(1, -10, 0, 150)
-    routesList.Position = UDim2.new(0, 5, 0, 225)
-    routesList.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-    routesList.BorderSizePixel = 0
-    routesList.ScrollBarThickness = 3
-    routesList.Parent = container
-    
-    local listLayout = Instance.new("UIListLayout")
-    listLayout.Padding = UDim.new(0, 3)
-    listLayout.Parent = routesList
-    
-    -- Atualizar lista
-    local function updateRoutes()
-        for _, child in ipairs(routesList:GetChildren()) do
-            if child:IsA("TextLabel") then
-                child:Destroy()
-            end
-        end
-        
-        for name, route in pairs(ParkourSystem.Routes) do
-            local routeLabel = Instance.new("TextLabel")
-            routeLabel.Size = UDim2.new(1, -10, 0, 25)
-            routeLabel.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-            routeLabel.Text = string.format("%s | %s | %d frames", name, route.Date, #route.Frames)
-            routeLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-            routeLabel.Font = Enum.Font.Gotham
-            routeLabel.TextSize = 10
-            routeLabel.Parent = routesList
-        end
-        
-        routesList.CanvasSize = UDim2.new(0, 0, 0, #ParkourSystem.Routes * 28)
-    end
-    
-    task.spawn(function()
-        while container.Parent do
-            updateRoutes()
-            task.wait(1)
-        end
-    end)
-    
-    return container
 end
 
-function GUI:CreateIAContent(parent)
-    local container = Instance.new("Frame")
-    container.Size = UDim2.new(1, 0, 1, 0)
-    container.BackgroundTransparency = 1
-    container.Visible = false
-    container.Parent = parent
+local function pauseJJ()
+    paused = true
+end
+
+local function resumeJJ()
+    paused = false
+end
+
+-- UI
+local gui = Instance.new("ScreenGui")
+gui.Name = "JJsUI"
+gui.ResetOnSpawn = false
+gui.Parent = LocalPlayer.PlayerGui
+
+local main = Instance.new("Frame")
+main.Size = UDim2.new(0, 300, 0, 360)
+main.Position = UDim2.new(0.5, -150, 0.5, -180)
+main.BackgroundColor3 = Color3.fromRGB(18, 18, 30)
+main.BorderSizePixel = 0
+main.ClipsDescendants = true
+main.Parent = gui
+
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 18)
+local ms = Instance.new("UIStroke", main)
+ms.Thickness = 2
+ms.Color = Color3.fromRGB(0, 0, 0)
+
+-- Título
+local t1 = Instance.new("TextLabel", main)
+t1.Size = UDim2.new(1, 0, 0, 40)
+t1.Position = UDim2.new(0, 0, 0, 10)
+t1.BackgroundTransparency = 1
+t1.Text = "JECK DE CALCINHA SCRIPTS"
+t1.TextColor3 = Color3.fromRGB(255, 255, 255)
+t1.Font = Enum.Font.GothamBlack
+t1.TextSize = 18
+t1.Parent = main
+
+local t2 = Instance.new("TextLabel", main)
+t2.Size = UDim2.new(1, 0, 0, 20)
+t2.Position = UDim2.new(0, 0, 0, 48)
+t2.BackgroundTransparency = 1
+t2.Text = "JJ's Auto (Polichinelos)"
+t2.TextColor3 = Color3.fromRGB(150, 150, 170)
+t2.Font = Enum.Font.Gotham
+t2.TextSize = 11
+t2.Parent = main
+
+-- Status
+local st = Instance.new("TextLabel", main)
+st.Size = UDim2.new(1, -30, 0, 25)
+st.Position = UDim2.new(0, 15, 0, 75)
+st.BackgroundColor3 = Color3.fromRGB(25, 25, 40)
+st.BorderSizePixel = 0
+st.Text = "PRONTO"
+st.TextColor3 = Color3.fromRGB(76, 175, 80)
+st.Font = Enum.Font.GothamBold
+st.TextSize = 11
+st.Parent = main
+Instance.new("UICorner", st).CornerRadius = UDim.new(0, 8)
+
+-- Inputs
+local function createInput(label, default, y)
+    local lbl = Instance.new("TextLabel", main)
+    lbl.Size = UDim2.new(0, 140, 0, 20)
+    lbl.Position = UDim2.new(0, 15, 0, y)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = label
+    lbl.TextColor3 = Color3.fromRGB(200, 200, 200)
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextSize = 11
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
     
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, 0, 0, 25)
-    label.BackgroundTransparency = 1
-    label.Text = "GERADOR DE TEXTOS (IA)"
-    label.TextColor3 = Color3.fromRGB(180, 150, 100)
-    label.Font = Enum.Font.GothamBold
-    label.TextSize = 14
-    label.Parent = container
-    
-    -- Aviso de configuração
-    local aviso = Instance.new("TextLabel")
-    aviso.Size = UDim2.new(1, -10, 0, 60)
-    aviso.Position = UDim2.new(0, 5, 0, 35)
-    aviso.BackgroundTransparency = 1
-    aviso.Text = [[
-⚠️ Configure um proxy seguro para usar a IA
-Sem proxy, textos de exemplo serão gerados
-API Keys NÃO devem ficar no client
-    ]]
-    aviso.TextColor3 = Color3.fromRGB(255, 152, 0)
-    aviso.Font = Enum.Font.Gotham
-    aviso.TextSize = 10
-    aviso.TextWrapped = true
-    aviso.Parent = container
-    
-    -- Input de tema
-    local themeLabel = Instance.new("TextLabel")
-    themeLabel.Size = UDim2.new(0, 50, 0, 25)
-    themeLabel.Position = UDim2.new(0, 5, 0, 110)
-    themeLabel.BackgroundTransparency = 1
-    themeLabel.Text = "Tema:"
-    themeLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-    themeLabel.Font = Enum.Font.Gotham
-    themeLabel.TextSize = 12
-    themeLabel.Parent = container
-    
-    local themeBox = Instance.new("TextBox")
-    themeBox.Size = UDim2.new(1, -65, 0, 25)
-    themeBox.Position = UDim2.new(0, 60, 0, 110)
-    themeBox.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-    themeBox.Text = "Disciplina militar"
-    themeBox.TextColor3 = Color3.fromRGB(220, 220, 220)
-    themeBox.Font = Enum.Font.Gotham
-    themeBox.TextSize = 12
-    themeBox.BorderSizePixel = 0
-    themeBox.Parent = container
-    
-    local themeCorner = Instance.new("UICorner")
-    themeCorner.CornerRadius = UDim.new(0, 4)
-    themeCorner.Parent = themeBox
-    
-    -- Botão gerar
-    local generateBtn = Instance.new("TextButton")
-    generateBtn.Size = UDim2.new(1, -10, 0, 30)
-    generateBtn.Position = UDim2.new(0, 5, 0, 150)
-    generateBtn.BackgroundColor3 = Color3.fromRGB(60, 50, 40)
-    generateBtn.Text = "🤖 GERAR TEXTO"
-    generateBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    generateBtn.Font = Enum.Font.GothamBold
-    generateBtn.TextSize = 12
-    generateBtn.BorderSizePixel = 0
-    generateBtn.Parent = container
-    
-    local genCorner = Instance.new("UICorner")
-    genCorner.CornerRadius = UDim.new(0, 5)
-    genCorner.Parent = generateBtn
-    
-    -- Área de texto
-    local textArea = Instance.new("TextLabel")
-    textArea.Size = UDim2.new(1, -10, 0, 250)
-    textArea.Position = UDim2.new(0, 5, 0, 190)
-    textArea.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-    textArea.Text = ""
-    textArea.TextColor3 = Color3.fromRGB(220, 220, 220)
-    textArea.Font = Enum.Font.Gotham
-    textArea.TextSize = 11
-    textArea.TextWrapped = true
-    textArea.TextXAlignment = Enum.TextXAlignment.Left
-    textArea.TextYAlignment = Enum.TextYAlignment.Top
-    textArea.BorderSizePixel = 0
-    textArea.Parent = container
-    
-    local textCorner = Instance.new("UICorner")
-    textCorner.CornerRadius = UDim.new(0, 5)
-    textCorner.Parent = textArea
-    
-    generateBtn.MouseButton1Click:Connect(function()
-        local theme = themeBox
+    local box = Instance.new("TextBox", main)
+    box.Size = UDim2.new(1, -30, 0, 28)
+    box.Position = UDim2.new(0, 15, 0, y + 20)
+    box.BackgroundColor3 = Color3.fromRGB(25, 25, 40)
+    box.Text = default
+    box.TextColor3 = Color3.fromRGB(255, 255, 255)
+    box.Font = Enum.Font.Gotham
+    box.TextSize = 12
+    box.BorderSizePixel = 0
+    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 6)
+    return box
+end
+
+local qtdInput = createInput("Quantidade:", "10", 110)
+local delayInput = createInput("Delay (s):", "0.3", 165)
+
+-- Botão
+local function btn(txt, cor, y, cb)
+    local b = Instance.new("TextButton", main)
+    b.Size = UDim2.new(1, -30, 0, 35)
+    b.Position = UDim2.new(0, 15, 0, y)
+    b.BackgroundColor3 = cor
+    b.Text = txt
+    b.TextColor3 = Color3.fromRGB(255, 255, 255)
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 13
+    b.BorderSizePixel = 0
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 10)
+    b.MouseButton1Click:Connect(cb)
+    return b
+end
+
+btn("▶ INICIAR (F2)", Color3.fromRGB(76, 175, 80), 225, function()
+    target = tonumber(qtdInput.Text) or 10
+    delayTime = tonumber(delayInput.Text) or 0.3
+    doneCount = 0
+    startJJ()
+    if running then
+        st.Text = "EXECUTANDO..."
+        st.TextColor3 = Color3.fromRGB(33, 150, 243)
+    end
+end)
+
+btn("⏸ PAUSAR", Color3.fromRGB(255, 152, 0), 265, function()
+    pauseJJ()
+    st.Text = "PAUSADO"
+    st.TextColor3 = Color3.fromRGB(255, 152, 0)
+end)
+
+btn("▶ CONTINUAR", Color3.fromRGB(76, 175, 80), 305, function()
+    resumeJJ()
+    st.Text = "EXECUTANDO..."
+    st.TextColor3 = Color3.fromRGB(33, 150, 243)
+end)
+
+btn("⏹ PARAR", Color3.fromRGB(244, 67, 54), 345, function()
+    stopJJ()
+    st.Text = "PRONTO"
+    st.TextColor3 = Color3.fromRGB(76, 175, 80)
+end)
+
+-- Progresso
+local progLabel = Instance.new("TextLabel", main)
+progLabel.Size = UDim2.new(1, -30, 0, 20)
+progLabel.Position = UDim2.new(0, 15, 0, 395)
+progLabel.BackgroundTransparency = 1
+progLabel.Text = "Progresso: 0/10"
+progLabel.TextColor3 = Color3.fromRGB(150, 150, 170)
+progLabel.Font = Enum.Font.Gotham
+progLabel.TextSize = 10
+
+-- Atualizador de status
+task.spawn(function()
+    while gui.Parent do
+        if running then
+            local key = detectKey()
+            local keyName = key and (key == Enum.KeyCode.Q and "Q" or "E") or "?"
+            progLabel.Text = "Progresso: "..doneCount.."/"..target.." | Tecla: "..keyName
+        end
+        task.wait(0.1)
+    end
+end)
+
+-- Arrastar
+local dr, ds, sp = false, nil, nil
+t1.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 then
+        dr, ds, sp = true, i.Position, main.Position
+    end
+end)
+UserInputService.InputChanged:Connect(function(i)
+    if dr and i.UserInputType == Enum.UserInputType.MouseMovement then
+        local d = i.Position - ds
+        main.Position = UDim2.new(sp.X.Scale, sp.X.Offset + d.X, sp.Y.Scale, sp.Y.Offset + d.Y)
+    end
+end)
+UserInputService.InputEnded:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 then dr = false end
+end)
+
+-- Atalho F2
+UserInputService.InputBegan:Connect(function(i, g)
+    if g then return end
+    if i.KeyCode == Enum.KeyCode.F2 then
+        target = tonumber(qtdInput.Text) or 10
+        delayTime = tonumber(delayInput.Text) or 0.3
+        if running then
+            stopJJ()
+            st.Text = "PRONTO"
+            st.TextColor3 = Color3.fromRGB(76, 175, 80)
+        else
+            doneCount = 0
+            startJJ()
+            if running then
+                st.Text = "EXECUTANDO..."
+                st.TextColor3 = Color3.fromRGB(33, 150, 243)
+            end
+        end
+    end
+end)
+
+print("Jeck de Calcinha Scripts - JJ's Auto carregado!")
+print("Detecta Q/E automaticamente do jogo!")
+print("F2 = Iniciar/Parar")
